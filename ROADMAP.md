@@ -14,7 +14,16 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] **Phase 2 — backend** — CNPG `ipa-labeler-pg` Cluster provisioned (10Gi Longhorn). SQLAlchemy 2.0 + Alembic 0001 schema (users / audio_clips / annotations JSONB). New blueprints `/api/clips` (list/get/upload/audio + sha256 dedupe + mutagen probe) and `/api/clips/<id>/annotations` (per-user GET/PUT, `user=me|all`). `/api/me` + per-user export. 13 pytest tests all green.
 - [x] **Phase 2 — migration script** — `scripts/migrate_from_json.py` ingests legacy `annotations.json` under a synthetic `legacy-system` user; idempotent by sha256. Tested locally against the dev DB with real harvard data.
 - [x] **Phase 2 — frontend** — Clip dropdown, upload + dedupe toast, save/load/export wired to clip-id endpoints, plus "View others" mode: toggle between editing-your-own and read-only browsing of any other user's annotation (segment counts shown per user). Read-only mode hides Save/Add Segment/Create Segments and blocks mutation entry points.
-- [x] **Phase 2 — deployment** — `deployment.yaml` updated with `alembic-upgrade` init container + `DATABASE_URL` from CNPG-issued `ipa-labeler-pg-app` secret. Phase 2 image built + pushed to GHCR.
+- [x] **Phase 2 — deployment** — `deployment.yaml` updated with `alembic-upgrade` init container + `DATABASE_URL` from CNPG-issued `ipa-labeler-pg-app` secret. Phase 2 image built + pushed to GHCR. ArgoCD synced; pod `1/1 Running`.
+- [x] **Phase 2 — backups (Step 2.7)** — `backups.yaml` adds a 5Gi Longhorn PVC + nightly CronJob (04:00 PT) that runs `pg_dump --no-owner --no-privileges`, gzips to `/backups/<UTC-date>.sql.gz`, prunes >14d. One-off run verified: `2026-05-12.sql.gz` present on the backup PVC.
+- [x] **Phase 2 — archive legacy data** — `/data/annotations.json` on the production PVC renamed to `annotations.json.phase1-archived` after migration. Nothing reads it; kept as historical evidence.
+
+**Phase 2 done-when criteria — all met:**
+- [x] Multi-user labeling works (View Others mode + per-user backend)
+- [x] sha256 dedupe (test_upload_dedupes_by_sha256)
+- [x] annotations.json fully migrated + archived
+- [x] pg_dump CronJob runs successfully (verified one-off)
+- [x] Rollout (`kubectl rollout restart`) preserves data (Postgres pod independent; verified during View Others rollout)
 
 Target end-state for Phases 1–2: Flask app at `ipa.homelab.caylermiley.com`, backed by Postgres, with Authelia SSO + admin-managed Authelia/LLDAP users. LAN-direct and Tailscale-via-Headscale for off-LAN. Annotations are per-user, per-clip; harvard.wav is the seed sample and any logged-in user can label any clip in the database.
 
