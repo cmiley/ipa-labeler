@@ -11,6 +11,10 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] **Step 1.5** — ArgoCD Application synced; verified `1/1 Running` end-to-end.
 - [x] **Step 1.6 — REPLACED** — Cloudflare Tunnel not needed. Wildcard CNAME `*.homelab.caylermiley.com → 192.168.20.200` in public DNS already covers reachability: LAN clients route directly to MetalLB; off-LAN clients reach the cluster via the existing Headscale/Tailscale mesh. No new cluster infrastructure required.
 - [x] **Authelia rule** — `ipa.homelab.caylermiley.com` added to user-level `one_factor` rules in `core/authelia/configmap.yaml`; default-deny was 403'ing the host. Verified `https://ipa.homelab.caylermiley.com/` returns 302 → Authelia portal.
+- [x] **Phase 2 — backend** — CNPG `ipa-labeler-pg` Cluster provisioned (10Gi Longhorn). SQLAlchemy 2.0 + Alembic 0001 schema (users / audio_clips / annotations JSONB). New blueprints `/api/clips` (list/get/upload/audio + sha256 dedupe + mutagen probe) and `/api/clips/<id>/annotations` (per-user GET/PUT, `user=me|all`). `/api/me` + per-user export. 13 pytest tests all green.
+- [x] **Phase 2 — migration script** — `scripts/migrate_from_json.py` ingests legacy `annotations.json` under a synthetic `legacy-system` user; idempotent by sha256. Tested locally against the dev DB with real harvard data.
+- [x] **Phase 2 — frontend (minimum-viable)** — Clip dropdown across all DB clips, upload button with dedupe toast, save/load/export wired to clip-id-based API. (User=all view UI deferred to a Phase-2 follow-up.)
+- [x] **Phase 2 — deployment** — `deployment.yaml` updated with `alembic-upgrade` init container + `DATABASE_URL` from CNPG-issued `ipa-labeler-pg-app` secret. Phase 2 image built + pushed to GHCR.
 
 Target end-state for Phases 1–2: Flask app at `ipa.homelab.caylermiley.com`, backed by Postgres, with Authelia SSO + admin-managed Authelia/LLDAP users. LAN-direct and Tailscale-via-Headscale for off-LAN. Annotations are per-user, per-clip; harvard.wav is the seed sample and any logged-in user can label any clip in the database.
 
