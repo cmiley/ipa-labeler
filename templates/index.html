@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>IPA Labeler</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="container">
+        <h1>IPA Labeler</h1>
+
+        <div class="upload-section">
+            <input type="file" id="audioFile" accept="audio/*">
+        </div>
+
+        <div id="playerSection" style="display:none;">
+            <audio id="audioPlayer" controls></audio>
+
+            <div class="waveform-section">
+                <div class="waveform-header">
+                    <h3>Waveform & Segmentation</h3>
+                    <div class="waveform-controls">
+                        <label class="toggle-label">
+                            <input type="checkbox" id="muteToggle">
+                            <span>Mute Audio</span>
+                        </label>
+                        <button id="clearTimestamps" class="small-btn">Clear Timestamps</button>
+                        <button id="createSegmentsBtn" class="small-btn">Create Segments</button>
+                        <button id="toggleWaveform" class="small-btn">▼</button>
+                    </div>
+                </div>
+                <div id="waveformContainer" class="waveform-container">
+                    <canvas id="waveformCanvas"></canvas>
+                    <div id="timestampMarkers"></div>
+                </div>
+            </div>
+
+            <div class="transcription-area">
+                <input type="text" id="transcriptionInput" placeholder="Type or click IPA symbols (Ctrl+key to cycle)...">
+                <button id="addSegment">Add Segment</button>
+            </div>
+
+            <div id="timeline"></div>
+
+            <div class="ipa-palette" id="ipaPalette"></div>
+
+            <div id="annotations"></div>
+
+            <div class="action-buttons">
+                <button id="saveBtn">Save Annotations</button>
+                <button id="exportJson" class="export-btn">Export JSON</button>
+                <button id="exportTxt" class="export-btn">Export TXT</button>
+                <button id="exportZip" class="export-btn">Export ZIP</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

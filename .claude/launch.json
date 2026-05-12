@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "ipa-labeler",
+      "runtimeExecutable": "uv",
+      "runtimeArgs": ["run", "python", "app.py"],
+      "port": 5000,
+      "autoPort": true
+    }
+  ]
+}

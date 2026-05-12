@@ -1,0 +1,22 @@
+[project]
+name = "ipa-labeler"
+version = "0.1.0"
+description = "Web application for labeling audio files with IPA phonetic symbols"
+requires-python = ">=3.13"
+dependencies = [
+    "flask>=3.1.0",
+    "gunicorn>=23.0.0",
+]
+
+[dependency-groups]
+dev = [
+    "pyright>=1.1.0",
+    "pytest>=8.0.0",
+    "ruff>=0.8.0",
+]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

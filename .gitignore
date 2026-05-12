@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*$py.class
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+uploads/
+annotations.json
+.DS_Store
+.idea/
+.vscode/
+
+# Local-only Claude config
+.claude/settings.local.json

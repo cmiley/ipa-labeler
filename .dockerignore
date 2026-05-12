@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.git/
+.gitignore
+.pytest_cache/
+.ruff_cache/
+.claude/
+tests/
+uploads/
+annotations.json
+ROADMAP.md
+README.md
+*.md
+.idea/
+.vscode/
+.DS_Store
