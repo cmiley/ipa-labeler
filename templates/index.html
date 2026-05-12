@@ -14,6 +14,11 @@
             <label for="clipSelect">Clip:</label>
             <select id="clipSelect"></select>
             <span class="clip-meta" id="clipMeta"></span>
+            <div class="view-toggle" role="tablist">
+                <button type="button" id="modeMine" class="view-toggle-btn active" data-mode="mine">Edit mine</button>
+                <button type="button" id="modeAll" class="view-toggle-btn" data-mode="all">View others</button>
+            </div>
+            <select id="viewUserSelect" style="display:none"></select>
             <span class="user-chip" id="userChip"></span>
         </div>
 

@@ -11,6 +11,9 @@ const ipaPalette = document.getElementById('ipaPalette');
 const clipSelect = document.getElementById('clipSelect');
 const clipMeta = document.getElementById('clipMeta');
 const userChip = document.getElementById('userChip');
+const modeMineBtn = document.getElementById('modeMine');
+const modeAllBtn = document.getElementById('modeAll');
+const viewUserSelect = document.getElementById('viewUserSelect');
 const transcriptionInput = document.getElementById('transcriptionInput');
 const addSegmentBtn = document.getElementById('addSegment');
 const annotationsDiv = document.getElementById('annotations');
@@ -29,6 +32,10 @@ let waveformCollapsed = false;
 let activeSegmentIndex = null;
 let dirty = false;
 let lastWaveformWidth = 0;
+let viewMode = 'mine';       // 'mine' = editable own annotation, 'all' = read-only view of any user
+let allAnnotations = [];     // [{userId, userDisplayName, segments}, ...] when viewMode === 'all'
+
+function isReadOnly() { return viewMode === 'all'; }
 
 const TIMESTAMP_DEDUPE_EPSILON = 0.005;
 
@@ -149,7 +156,11 @@ async function loadClip(clip) {
     clipMeta.textContent = clip.durationSeconds
         ? `${clip.durationSeconds.toFixed(1)}s${clip.sampleRateHz ? ` · ${clip.sampleRateHz}Hz` : ''}`
         : '';
-    await loadAnnotations();
+    if (viewMode === 'all') {
+        await enterAllMode();
+    } else {
+        await loadAnnotations();
+    }
     setupPlaybackHighlighting();
     await loadWaveform(audioUrl);
 }
@@ -404,6 +415,7 @@ audioFile.onchange = async (e) => {
 };
 
 addSegmentBtn.onclick = () => {
+    if (isReadOnly()) return;
     const text = transcriptionInput.value.trim();
     if (!text) return;
 
@@ -422,6 +434,7 @@ addSegmentBtn.onclick = () => {
 };
 
 waveformCanvas.onclick = (e) => {
+    if (isReadOnly()) return;
     const rect = waveformCanvas.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const percent = x / rect.width;
@@ -527,6 +540,7 @@ function pointClearOfSegments(time, excludeIndices) {
 }
 
 function moveSegmentBoundary(idx, field, newTime) {
+    if (isReadOnly()) return;
     const seg = annotations[idx];
     const partner = findSharedBoundary(idx, field);
 
@@ -592,6 +606,7 @@ function renderAnnotations() {
         textSpan.setAttribute('data-index', idx);
 
         textSpan.ondblclick = (e) => {
+            if (isReadOnly()) return;
             e.stopPropagation();
             const input = document.createElement('input');
             input.type = 'text';
@@ -624,6 +639,7 @@ function renderAnnotations() {
         semanticSpan.setAttribute('data-index', idx);
 
         semanticSpan.ondblclick = (e) => {
+            if (isReadOnly()) return;
             e.stopPropagation();
             const input = document.createElement('input');
             input.type = 'text';
@@ -750,13 +766,14 @@ function renderTimeline() {
 }
 
 window.deleteSegment = (idx) => {
+    if (isReadOnly()) return;
     annotations.splice(idx, 1);
     markDirty();
     renderAnnotations();
 };
 
 saveBtn.onclick = async () => {
-    if (!currentClip) return;
+    if (isReadOnly() || !currentClip) return;
 
     try {
         const res = await fetch(`/api/clips/${currentClip.id}/annotations`, {
@@ -859,6 +876,67 @@ async function loadCurrentUser() {
         userChip.textContent = '(no auth)';
     }
 }
+
+async function enterAllMode() {
+    if (!currentClip) return;
+    if (dirty && !confirm('Unsaved changes will be lost. Switch view anyway?')) return;
+
+    const res = await fetch(`/api/clips/${currentClip.id}/annotations?user=all`);
+    if (!res.ok) {
+        showToast('Could not load other users', 'error');
+        return;
+    }
+    const all = await res.json();
+    allAnnotations = (all || []).filter(a => !currentUser || a.userId !== currentUser.id);
+
+    viewMode = 'all';
+    document.body.classList.add('view-all');
+    annotationsDiv.classList.add('read-only');
+    modeMineBtn.classList.remove('active');
+    modeAllBtn.classList.add('active');
+
+    if (allAnnotations.length === 0) {
+        viewUserSelect.style.display = 'none';
+        annotations = [];
+        markClean();
+        renderAnnotations();
+        showToast('No other users have labeled this clip yet', 'info');
+        return;
+    }
+
+    viewUserSelect.innerHTML = '';
+    allAnnotations.forEach(a => {
+        const opt = document.createElement('option');
+        opt.value = String(a.userId);
+        opt.textContent = `${a.userDisplayName || ('user ' + a.userId)} (${a.segments.length})`;
+        viewUserSelect.appendChild(opt);
+    });
+    viewUserSelect.style.display = '';
+    viewUserSelect.value = String(allAnnotations[0].userId);
+    renderSelectedOtherUser();
+}
+
+function renderSelectedOtherUser() {
+    const uid = parseInt(viewUserSelect.value, 10);
+    const entry = allAnnotations.find(a => a.userId === uid);
+    annotations = entry ? entry.segments.map(s => ({...s})) : [];
+    markClean();
+    renderAnnotations();
+}
+
+async function exitAllMode() {
+    viewMode = 'mine';
+    document.body.classList.remove('view-all');
+    annotationsDiv.classList.remove('read-only');
+    modeAllBtn.classList.remove('active');
+    modeMineBtn.classList.add('active');
+    viewUserSelect.style.display = 'none';
+    await loadAnnotations();
+}
+
+modeMineBtn.onclick = () => { if (viewMode !== 'mine') exitAllMode(); };
+modeAllBtn.onclick = () => { if (viewMode !== 'all') enterAllMode(); };
+viewUserSelect.onchange = renderSelectedOtherUser;
 
 async function init() {
     await loadCurrentUser();

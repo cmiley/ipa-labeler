@@ -66,6 +66,80 @@ h1 {
     font-weight: 500;
 }
 
+.view-toggle {
+    display: inline-flex;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.view-toggle-btn {
+    padding: 5px 10px;
+    background: white;
+    color: #555;
+    border: none;
+    border-right: 1px solid #ccc;
+    font-size: 12px;
+    cursor: pointer;
+}
+
+.view-toggle-btn:last-child {
+    border-right: none;
+}
+
+.view-toggle-btn:hover {
+    background: #f0f0f0;
+}
+
+.view-toggle-btn.active {
+    background: #2196f3;
+    color: white;
+}
+
+#viewUserSelect {
+    padding: 5px 8px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font-size: 13px;
+    background: white;
+}
+
+/* Read-only annotations panel: dim and disable editing affordances. */
+#annotations.read-only .annotation-segment {
+    background: #f5f5f5;
+    border-left: 3px solid #ff9800;
+    cursor: default;
+}
+
+#annotations.read-only .delete-btn,
+#annotations.read-only .time-slider,
+#annotations.read-only .time-slider-group {
+    display: none;
+}
+
+#annotations.read-only .annotation-text,
+#annotations.read-only .semantic-label {
+    pointer-events: none;
+}
+
+.read-only-banner {
+    padding: 6px 10px;
+    background: #fff3e0;
+    color: #e65100;
+    border: 1px solid #ffcc80;
+    border-radius: 4px;
+    font-size: 12px;
+    margin: 6px 0;
+}
+
+body.view-all .transcription-area,
+body.view-all #saveBtn,
+body.view-all #clearTimestamps,
+body.view-all #createSegmentsBtn,
+body.view-all .marker-delete {
+    display: none;
+}
+
 .upload-section {
     margin-bottom: 10px;
 }
