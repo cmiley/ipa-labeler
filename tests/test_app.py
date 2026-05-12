@@ -138,6 +138,36 @@ def test_multi_user_isolation(client):
     assert bodies[0]["userDisplayName"] == "testuser"
 
 
+def test_transcribe_endpoint(client, monkeypatch):
+    """The /transcribe endpoint shells out to asr.transcribe; stub it for speed."""
+    import asr
+
+    def fake_transcribe(audio_path):
+        return {
+            "semanticLabel": "fake",
+            "segments": [
+                {"startTime": 0.1, "endTime": 0.5, "text": "fˈeɪk", "semanticLabel": "fake"}
+            ],
+            "language": "en",
+            "languageProbability": 1.0,
+        }
+
+    monkeypatch.setattr(asr, "transcribe", fake_transcribe)
+
+    clip_id = client.get("/api/clips").get_json()[0]["id"]
+    res = client.post(f"/api/clips/{clip_id}/transcribe")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["semanticLabel"] == "fake"
+    assert len(body["segments"]) == 1
+    assert body["segments"][0]["text"] == "fˈeɪk"
+
+
+def test_transcribe_missing_clip(client):
+    res = client.post("/api/clips/99999/transcribe")
+    assert res.status_code == 404
+
+
 def test_export_json(client):
     clip_id = client.get("/api/clips").get_json()[0]["id"]
     payload = [{"startTime": 0, "endTime": 1, "text": "k", "semanticLabel": ""}]

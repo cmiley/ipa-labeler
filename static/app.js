@@ -14,6 +14,7 @@ const userChip = document.getElementById('userChip');
 const modeMineBtn = document.getElementById('modeMine');
 const modeAllBtn = document.getElementById('modeAll');
 const viewUserSelect = document.getElementById('viewUserSelect');
+const autoTranscribeBtn = document.getElementById('autoTranscribeBtn');
 const transcriptionInput = document.getElementById('transcriptionInput');
 const addSegmentBtn = document.getElementById('addSegment');
 const annotationsDiv = document.getElementById('annotations');
@@ -937,6 +938,36 @@ async function exitAllMode() {
 modeMineBtn.onclick = () => { if (viewMode !== 'mine') exitAllMode(); };
 modeAllBtn.onclick = () => { if (viewMode !== 'all') enterAllMode(); };
 viewUserSelect.onchange = renderSelectedOtherUser;
+
+autoTranscribeBtn.onclick = async () => {
+    if (isReadOnly() || !currentClip) return;
+    if (annotations.length > 0 && !confirm('Replace your current annotations with the auto-transcription?')) {
+        return;
+    }
+
+    autoTranscribeBtn.disabled = true;
+    const originalLabel = autoTranscribeBtn.textContent;
+    autoTranscribeBtn.textContent = '⏳ transcribing…';
+
+    try {
+        const res = await fetch(`/api/clips/${currentClip.id}/transcribe`, { method: 'POST' });
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            showToast(`Transcribe failed: ${err.error || res.statusText}`, 'error');
+            return;
+        }
+        const result = await res.json();
+        annotations = result.segments || [];
+        markDirty();
+        renderAnnotations();
+        showToast(`Auto-transcribed ${annotations.length} words — review and Save`, 'success');
+    } catch (err) {
+        showToast(`Transcribe failed: ${err.message}`, 'error');
+    } finally {
+        autoTranscribeBtn.disabled = false;
+        autoTranscribeBtn.textContent = originalLabel;
+    }
+};
 
 async function init() {
     await loadCurrentUser();

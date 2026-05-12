@@ -102,6 +102,30 @@ def create_app() -> Flask:
             user = get_or_create_current_user(session)
             return jsonify(user.to_dict())
 
+    @app.post("/api/clips/<int:clip_id>/transcribe")
+    def transcribe_clip(clip_id: int):
+        from pathlib import Path as _Path
+
+        import asr
+
+        with session_scope() as session:
+            clip = session.get(AudioClip, clip_id)
+            if clip is None:
+                abort(404)
+            storage_filename = clip.storage_filename
+
+        audio_path = _Path(app.config["UPLOAD_FOLDER"]) / storage_filename
+        if not audio_path.exists():
+            abort(404, description="audio file missing on disk")
+
+        try:
+            result = asr.transcribe(audio_path)
+        except Exception as exc:
+            app.logger.exception("transcribe failed for clip %s", clip_id)
+            return jsonify({"error": f"transcription failed: {exc}"}), 500
+
+        return jsonify(result)
+
     @app.get("/api/clips/<int:clip_id>/export/<fmt>")
     def export(clip_id: int, fmt: str):
         with session_scope() as session:

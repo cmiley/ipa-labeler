@@ -159,6 +159,19 @@ body.view-all .marker-delete {
     background: #45a049;
 }
 
+.auto-btn {
+    background: #9c27b0;
+}
+
+.auto-btn:hover {
+    background: #7b1fa2;
+}
+
+.auto-btn:disabled {
+    background: #ce93d8;
+    cursor: wait;
+}
+
 #audioPlayer {
     width: 100%;
     margin: 10px 0;
