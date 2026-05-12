@@ -10,8 +10,16 @@
     <div class="container">
         <h1>IPA Labeler</h1>
 
+        <div class="clip-bar">
+            <label for="clipSelect">Clip:</label>
+            <select id="clipSelect"></select>
+            <span class="clip-meta" id="clipMeta"></span>
+            <span class="user-chip" id="userChip"></span>
+        </div>
+
         <div class="upload-section">
-            <input type="file" id="audioFile" accept="audio/*">
+            <label class="upload-button" for="audioFile">+ Upload new clip</label>
+            <input type="file" id="audioFile" accept="audio/*" hidden>
         </div>
 
         <div id="playerSection" style="display:none;">

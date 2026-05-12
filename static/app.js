@@ -1,13 +1,16 @@
 let ipaData = null;
 let keyIndexMap = {};
-let currentAudio = null;
 let annotations = [];
-let currentFilename = null;
+let currentClip = null;       // {id, originalFilename, durationSeconds, ...}
+let currentUser = null;       // {id, sub, displayName, ...}
 
 const audioFile = document.getElementById('audioFile');
 const audioPlayer = document.getElementById('audioPlayer');
 const playerSection = document.getElementById('playerSection');
 const ipaPalette = document.getElementById('ipaPalette');
+const clipSelect = document.getElementById('clipSelect');
+const clipMeta = document.getElementById('clipMeta');
+const userChip = document.getElementById('userChip');
 const transcriptionInput = document.getElementById('transcriptionInput');
 const addSegmentBtn = document.getElementById('addSegment');
 const annotationsDiv = document.getElementById('annotations');
@@ -138,18 +141,22 @@ function insertAtCursor(text) {
     }
 }
 
-async function loadAudioFile(filename) {
-    currentFilename = filename;
-    audioPlayer.src = `/audio/${filename}`;
+async function loadClip(clip) {
+    currentClip = clip;
+    const audioUrl = `/api/clips/${clip.id}/audio`;
+    audioPlayer.src = audioUrl;
     playerSection.style.display = 'block';
+    clipMeta.textContent = clip.durationSeconds
+        ? `${clip.durationSeconds.toFixed(1)}s${clip.sampleRateHz ? ` · ${clip.sampleRateHz}Hz` : ''}`
+        : '';
     await loadAnnotations();
     setupPlaybackHighlighting();
-    await loadWaveform(filename);
+    await loadWaveform(audioUrl);
 }
 
-async function loadWaveform(filename) {
+async function loadWaveform(audioUrl) {
     try {
-        const response = await fetch(`/audio/${filename}`);
+        const response = await fetch(audioUrl);
         const arrayBuffer = await response.arrayBuffer();
 
         const audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -375,7 +382,7 @@ audioFile.onchange = async (e) => {
     formData.append('audio', file);
 
     try {
-        const res = await fetch('/upload', {
+        const res = await fetch('/api/clips', {
             method: 'POST',
             body: formData
         });
@@ -386,10 +393,13 @@ audioFile.onchange = async (e) => {
             return;
         }
 
-        const data = await res.json();
-        await loadAudioFile(data.filename);
+        const clip = await res.json();
+        if (clip.duplicate) showToast(`'${file.name}' already in the database`, 'info');
+        await refreshClipList(clip.id);
     } catch (err) {
         showToast(`Upload failed: ${err.message}`, 'error');
+    } finally {
+        audioFile.value = '';
     }
 };
 
@@ -746,16 +756,17 @@ window.deleteSegment = (idx) => {
 };
 
 saveBtn.onclick = async () => {
-    if (!currentFilename) return;
+    if (!currentClip) return;
 
     try {
-        const res = await fetch(`/annotations/${currentFilename}`, {
-            method: 'POST',
+        const res = await fetch(`/api/clips/${currentClip.id}/annotations`, {
+            method: 'PUT',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(annotations)
         });
         if (!res.ok) {
-            showToast(`Save failed: ${res.statusText}`, 'error');
+            const err = await res.json().catch(() => ({}));
+            showToast(`Save failed: ${err.description || err.error || res.statusText}`, 'error');
             return;
         }
         markClean();
@@ -766,26 +777,26 @@ saveBtn.onclick = async () => {
 };
 
 document.getElementById('exportJson').onclick = () => {
-    if (!currentFilename) return;
-    window.location.href = `/export/${currentFilename}/json`;
+    if (!currentClip) return;
+    window.location.href = `/api/clips/${currentClip.id}/export/json`;
 };
 
 document.getElementById('exportTxt').onclick = () => {
-    if (!currentFilename) return;
-    window.location.href = `/export/${currentFilename}/txt`;
+    if (!currentClip) return;
+    window.location.href = `/api/clips/${currentClip.id}/export/txt`;
 };
 
 document.getElementById('exportZip').onclick = () => {
-    if (!currentFilename) return;
-    window.location.href = `/export/${currentFilename}/zip`;
+    if (!currentClip) return;
+    window.location.href = `/api/clips/${currentClip.id}/export/zip`;
 };
 
 async function loadAnnotations() {
-    if (!currentFilename) return;
+    if (!currentClip) return;
 
-    const res = await fetch(`/annotations/${currentFilename}`);
+    const res = await fetch(`/api/clips/${currentClip.id}/annotations?user=me`);
     const data = await res.json();
-    annotations = data || [];
+    annotations = (data && data.segments) ? data.segments : [];
 
     annotations.forEach(seg => {
         if (!seg.hasOwnProperty('semanticLabel')) {
@@ -797,13 +808,62 @@ async function loadAnnotations() {
     renderAnnotations();
 }
 
-async function init() {
-    await loadIPASymbols();
-
-    const res = await fetch('/audio/harvard.wav');
-    if (res.ok) {
-        await loadAudioFile('harvard.wav');
+async function refreshClipList(selectId = null) {
+    const res = await fetch('/api/clips');
+    if (!res.ok) {
+        showToast('Could not load clip list', 'error');
+        return;
     }
+    const clips = await res.json();
+    const prevSelectedId = selectId ?? (currentClip ? currentClip.id : null);
+
+    clipSelect.innerHTML = '';
+    if (clips.length === 0) {
+        const opt = document.createElement('option');
+        opt.textContent = '(no clips yet — upload one)';
+        opt.disabled = true;
+        clipSelect.appendChild(opt);
+        playerSection.style.display = 'none';
+        return;
+    }
+
+    clips.forEach(c => {
+        const opt = document.createElement('option');
+        opt.value = String(c.id);
+        opt.textContent = c.originalFilename;
+        opt.dataset.clip = JSON.stringify(c);
+        clipSelect.appendChild(opt);
+    });
+
+    const target = clips.find(c => c.id === prevSelectedId) || clips[0];
+    clipSelect.value = String(target.id);
+    await loadClip(target);
+}
+
+clipSelect.onchange = async () => {
+    if (dirty && !confirm('Unsaved changes will be lost. Switch clips anyway?')) {
+        clipSelect.value = String(currentClip.id);
+        return;
+    }
+    const opt = clipSelect.options[clipSelect.selectedIndex];
+    const clip = JSON.parse(opt.dataset.clip);
+    await loadClip(clip);
+};
+
+async function loadCurrentUser() {
+    const res = await fetch('/api/me');
+    if (res.ok) {
+        currentUser = await res.json();
+        userChip.textContent = currentUser.displayName || currentUser.sub;
+    } else {
+        userChip.textContent = '(no auth)';
+    }
+}
+
+async function init() {
+    await loadCurrentUser();
+    await loadIPASymbols();
+    await refreshClipList();
 }
 
 init();

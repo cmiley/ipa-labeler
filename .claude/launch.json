@@ -6,7 +6,12 @@
       "runtimeExecutable": "uv",
       "runtimeArgs": ["run", "python", "app.py"],
       "port": 5000,
-      "autoPort": true
+      "autoPort": true,
+      "env": {
+        "DATABASE_URL": "postgresql://ipa:ipa@127.0.0.1:5432/ipa_labeler",
+        "IPA_LABELER_DEV_USER": "devuser",
+        "IPA_LABELER_DATA_DIR": "/Users/cayler/PycharmProjects/ipa_labeler"
+      }
     }
   ]
 }

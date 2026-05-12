@@ -27,9 +27,9 @@ USER app
 
 EXPOSE 8080
 
-# Phase 1 uses a single JSON annotations file; pin -w 1 so the in-process
-# threading.Lock is sufficient for write safety. Lift to -w 2+ once Phase 2
-# moves storage to Postgres.
+# Phase 2: storage is Postgres. Multi-worker is safe with the new endpoints,
+# but we keep -w 1 for now since the PVC at /data is still RWO and a single
+# pod is more than enough for this workload.
 CMD ["gunicorn", "-w", "1", "-b", "0.0.0.0:8080", \
      "--access-logfile", "-", "--error-logfile", "-", \
      "app:app"]

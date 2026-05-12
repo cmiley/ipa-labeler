@@ -25,8 +25,64 @@ h1 {
     color: #333;
 }
 
+.clip-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px;
+    background: #f9f9f9;
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    margin-bottom: 10px;
+}
+
+.clip-bar label {
+    font-weight: 600;
+    color: #444;
+}
+
+.clip-bar select {
+    flex: 1;
+    padding: 6px 10px;
+    border: 1px solid #ccc;
+    border-radius: 3px;
+    font-size: 14px;
+    background: white;
+    min-width: 200px;
+}
+
+.clip-meta {
+    font-size: 12px;
+    color: #666;
+}
+
+.user-chip {
+    margin-left: auto;
+    padding: 4px 10px;
+    background: #e3f2fd;
+    color: #1976d2;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 500;
+}
+
 .upload-section {
     margin-bottom: 10px;
+}
+
+.upload-button {
+    display: inline-block;
+    padding: 8px 14px;
+    background: #4caf50;
+    color: white;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 13px;
+    font-weight: 500;
+}
+
+.upload-button:hover {
+    background: #45a049;
 }
 
 #audioPlayer {

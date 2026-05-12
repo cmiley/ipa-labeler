@@ -1,162 +1,170 @@
-from flask import Flask, render_template, request, jsonify, send_from_directory, send_file
-from werkzeug.utils import secure_filename
-from pathlib import Path
+from __future__ import annotations
+
+import hashlib
 import io
 import json
 import os
 import shutil
-import threading
 import zipfile
+from pathlib import Path
 
-ALLOWED_EXTENSIONS = {".wav", ".mp3", ".ogg", ".flac", ".m4a", ".aac", ".webm"}
+from flask import Flask, abort, jsonify, render_template, send_file
+from sqlalchemy import select
+
+import annotations as annotations_module
+import clips as clips_module
+from auth import get_or_create_current_user
+from db import engine, session_scope
+from models import Annotation, AudioClip, Base
+
 SEED_FILES = ["harvard.wav"]
 
-app = Flask(__name__)
 
-DATA_DIR = Path(os.environ.get("IPA_LABELER_DATA_DIR", ".")).resolve()
-DATA_DIR.mkdir(parents=True, exist_ok=True)
-app.config["UPLOAD_FOLDER"] = DATA_DIR / "uploads"
-app.config["UPLOAD_FOLDER"].mkdir(exist_ok=True)
-app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
-
-annotations_file = DATA_DIR / "annotations.json"
-if not annotations_file.exists():
-    annotations_file.write_text("{}")
-
-# Seed bundled sample files into UPLOAD_FOLDER on first start with a fresh volume.
-_app_dir = Path(__file__).parent.resolve()
-for _name in SEED_FILES:
-    _src = _app_dir / _name
-    _dst = app.config["UPLOAD_FOLDER"] / _name
-    if _src.exists() and not _dst.exists():
-        shutil.copy2(_src, _dst)
-
-# Annotations is a single JSON file in Phase 1; serialize read-modify-write
-# across request threads. Phase 2 replaces this with Postgres transactions.
-_annotations_lock = threading.Lock()
+def _data_dir() -> Path:
+    return Path(os.environ.get("IPA_LABELER_DATA_DIR", ".")).resolve()
 
 
-@app.route("/")
-def index():
-    return render_template("index.html")
+def _seed_disk_files(upload_folder: Path) -> None:
+    """Copy bundled sample files into the upload folder on first start."""
+    app_dir = Path(__file__).parent.resolve()
+    for name in SEED_FILES:
+        src = app_dir / name
+        dst = upload_folder / name
+        if src.exists() and not dst.exists():
+            shutil.copy2(src, dst)
 
 
-@app.route("/healthz")
-def healthz():
-    return {"ok": True}, 200
+def _sha256_path(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
+        for chunk in iter(lambda: f.read(1 << 16), b""):
+            h.update(chunk)
+    return h.hexdigest()
 
 
-@app.route("/upload", methods=["POST"])
-def upload_audio():
-    if "audio" not in request.files:
-        return jsonify({"error": "No file"}), 400
+def _seed_db_from_disk(upload_folder: Path) -> None:
+    """Ensure every file in upload_folder has a row in audio_clips.
 
-    file = request.files["audio"]
-    if not file.filename:
-        return jsonify({"error": "No filename"}), 400
-
-    safe_name = secure_filename(file.filename)
-    if not safe_name:
-        return jsonify({"error": "Invalid filename"}), 400
-
-    ext = Path(safe_name).suffix.lower()
-    if ext not in ALLOWED_EXTENSIONS:
-        return jsonify({"error": f"Unsupported file type: {ext or '(none)'}"}), 400
-
-    if file.mimetype and not file.mimetype.startswith("audio/"):
-        return jsonify({"error": f"Unexpected MIME type: {file.mimetype}"}), 400
-
-    filepath = app.config["UPLOAD_FOLDER"] / safe_name
-    file.save(filepath)
-    return jsonify({"filename": safe_name})
-
-
-@app.route("/audio/<filename>")
-def serve_audio(filename):
-    return send_from_directory(app.config["UPLOAD_FOLDER"], filename)
-
-
-@app.route("/annotations/<filename>", methods=["GET", "POST"])
-def handle_annotations(filename):
-    with _annotations_lock:
-        data = json.loads(annotations_file.read_text())
-
-        if request.method == "POST":
-            data[filename] = request.json
-            annotations_file.write_text(json.dumps(data, indent=2))
-            return jsonify({"status": "saved"})
-
-        return jsonify(data.get(filename, []))
-
-
-@app.route("/export/<filename>/<format>")
-def export_annotations(filename, format):
-    with _annotations_lock:
-        data = json.loads(annotations_file.read_text())
-    annotations = data.get(filename, [])
-
-    if format == "json":
-        output = json.dumps(annotations, indent=2)
-        mimetype = "application/json"
-        ext = "json"
-    elif format == "txt":
-        lines = []
-        for ann in annotations:
-            semantic = ann.get("semanticLabel", "")
-            if semantic:
-                lines.append(
-                    f"{ann['startTime']:.2f}s - {ann['endTime']:.2f}s: {ann['text']} ({semantic})"
+    Idempotent: matches existing rows by content_sha256, skips temp files.
+    Used both for the harvard.wav bootstrap and for the JSON-migration cutover.
+    """
+    if not upload_folder.exists():
+        return
+    with session_scope() as session:
+        for path in sorted(upload_folder.iterdir()):
+            if not path.is_file() or path.name.startswith("."):
+                continue
+            digest = _sha256_path(path)
+            existing = session.scalar(select(AudioClip).where(AudioClip.content_sha256 == digest))
+            if existing is not None:
+                continue
+            session.add(
+                AudioClip(
+                    storage_filename=path.name,
+                    original_filename=path.name,
+                    content_sha256=digest,
+                    uploaded_by=None,
+                    status="approved",
                 )
-            else:
-                lines.append(f"{ann['startTime']:.2f}s - {ann['endTime']:.2f}s: {ann['text']}")
-        output = "\n".join(lines)
-        mimetype = "text/plain"
-        ext = "txt"
-    else:
+            )
+
+
+def create_app() -> Flask:
+    app = Flask(__name__)
+    data_dir = _data_dir()
+    data_dir.mkdir(parents=True, exist_ok=True)
+    upload_folder = data_dir / "uploads"
+    upload_folder.mkdir(exist_ok=True)
+    app.config["UPLOAD_FOLDER"] = upload_folder
+    app.config["MAX_CONTENT_LENGTH"] = 100 * 1024 * 1024
+
+    _seed_disk_files(upload_folder)
+
+    if os.environ.get("IPA_LABELER_AUTO_MIGRATE") == "1":
+        Base.metadata.create_all(engine)
+    if os.environ.get("IPA_LABELER_AUTO_SEED", "1") == "1":
+        _seed_db_from_disk(upload_folder)
+
+    app.register_blueprint(clips_module.bp)
+    app.register_blueprint(annotations_module.bp)
+
+    @app.get("/")
+    def index():
+        return render_template("index.html")
+
+    @app.get("/healthz")
+    def healthz():
+        return {"ok": True}, 200
+
+    @app.get("/api/me")
+    def me():
+        with session_scope() as session:
+            user = get_or_create_current_user(session)
+            return jsonify(user.to_dict())
+
+    @app.get("/api/clips/<int:clip_id>/export/<fmt>")
+    def export(clip_id: int, fmt: str):
+        with session_scope() as session:
+            clip = session.get(AudioClip, clip_id)
+            if clip is None:
+                abort(404)
+            user = get_or_create_current_user(session)
+            ann = session.scalar(
+                select(Annotation).where(
+                    Annotation.clip_id == clip_id, Annotation.user_id == user.id
+                )
+            )
+            segments = ann.segments if ann else []
+            storage_filename = clip.storage_filename
+            original_stem = Path(clip.original_filename).stem
+
+        if fmt == "json":
+            return send_file(
+                io.BytesIO(json.dumps(segments, indent=2).encode("utf-8")),
+                mimetype="application/json",
+                as_attachment=True,
+                download_name=f"{original_stem}_annotations.json",
+            )
+        if fmt == "txt":
+            lines = []
+            for s in segments:
+                line = f"{s['startTime']:.2f}s - {s['endTime']:.2f}s: {s['text']}"
+                if s.get("semanticLabel"):
+                    line += f" ({s['semanticLabel']})"
+                lines.append(line)
+            return send_file(
+                io.BytesIO("\n".join(lines).encode("utf-8")),
+                mimetype="text/plain",
+                as_attachment=True,
+                download_name=f"{original_stem}_annotations.txt",
+            )
+        if fmt == "zip":
+            buf = io.BytesIO()
+            audio_path = upload_folder / storage_filename
+            with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+                if audio_path.exists():
+                    zf.write(audio_path, clip.original_filename)
+                zf.writestr(f"{original_stem}_annotations.json", json.dumps(segments, indent=2))
+                lines = []
+                for s in segments:
+                    line = f"{s['startTime']:.2f}s - {s['endTime']:.2f}s: {s['text']}"
+                    if s.get("semanticLabel"):
+                        line += f" ({s['semanticLabel']})"
+                    lines.append(line)
+                zf.writestr(f"{original_stem}_annotations.txt", "\n".join(lines))
+            buf.seek(0)
+            return send_file(
+                buf,
+                mimetype="application/zip",
+                as_attachment=True,
+                download_name=f"{original_stem}_export.zip",
+            )
         return jsonify({"error": "Invalid format"}), 400
 
-    return send_file(
-        io.BytesIO(output.encode("utf-8")),
-        mimetype=mimetype,
-        as_attachment=True,
-        download_name=f"{Path(filename).stem}_annotations.{ext}",
-    )
+    return app
 
 
-@app.route("/export/<filename>/zip")
-def export_zip(filename, format=None):
-    with _annotations_lock:
-        data = json.loads(annotations_file.read_text())
-    annotations = data.get(filename, [])
-
-    zip_buffer = io.BytesIO()
-    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zip_file:
-        audio_path = app.config["UPLOAD_FOLDER"] / filename
-        if audio_path.exists():
-            zip_file.write(audio_path, filename)
-
-        annotations_json = json.dumps(annotations, indent=2)
-        zip_file.writestr(f"{Path(filename).stem}_annotations.json", annotations_json)
-
-        lines = []
-        for ann in annotations:
-            semantic = ann.get("semanticLabel", "")
-            if semantic:
-                lines.append(
-                    f"{ann['startTime']:.2f}s - {ann['endTime']:.2f}s: {ann['text']} ({semantic})"
-                )
-            else:
-                lines.append(f"{ann['startTime']:.2f}s - {ann['endTime']:.2f}s: {ann['text']}")
-        annotations_txt = "\n".join(lines)
-        zip_file.writestr(f"{Path(filename).stem}_annotations.txt", annotations_txt)
-
-    zip_buffer.seek(0)
-    return send_file(
-        zip_buffer,
-        mimetype="application/zip",
-        as_attachment=True,
-        download_name=f"{Path(filename).stem}_export.zip",
-    )
+app = create_app()
 
 
 if __name__ == "__main__":
