@@ -163,6 +163,98 @@ def test_transcribe_endpoint(client, monkeypatch):
     assert body["segments"][0]["text"] == "fˈeɪk"
 
 
+def test_agreement_needs_two_annotators(client):
+    clip_id = client.get("/api/clips").get_json()[0]["id"]
+    res = client.get(f"/api/clips/{clip_id}/agreement")
+    assert res.status_code == 200
+    body = res.get_json()
+    assert body["pairs"] == []
+    assert "note" in body
+
+
+def test_agreement_two_users_identical(client):
+    """Two annotators with identical segments → κ=1.0, F1=1.0, PER=0."""
+    clip_id = client.get("/api/clips").get_json()[0]["id"]
+    segs = [
+        {"startTime": 0.0, "endTime": 1.0, "text": "ðə", "semanticLabel": "the"},
+        {"startTime": 1.0, "endTime": 2.0, "text": "kæt", "semanticLabel": "cat"},
+    ]
+    import json as _json
+
+    client.put(
+        f"/api/clips/{clip_id}/annotations",
+        data=_json.dumps(segs),
+        content_type="application/json",
+    )
+    client.put(
+        f"/api/clips/{clip_id}/annotations",
+        data=_json.dumps(segs),
+        content_type="application/json",
+        headers={"Remote-User": "alice"},
+    )
+
+    res = client.get(f"/api/clips/{clip_id}/agreement")
+    assert res.status_code == 200
+    pairs = res.get_json()["pairs"]
+    assert len(pairs) == 1
+    p = pairs[0]
+    assert p["frameKappa"] == 1.0
+    assert p["boundaryF1"] == 1.0
+    assert p["phonemeErrorRate"] == 0.0
+    assert p["matchedSegmentCount"] == 2
+
+
+def test_agreement_two_users_disagree(client):
+    """Different IPA on same boundaries → κ<1, boundary F1=1, PER>0."""
+    clip_id = client.get("/api/clips").get_json()[0]["id"]
+    import json as _json
+
+    client.put(
+        f"/api/clips/{clip_id}/annotations",
+        data=_json.dumps(
+            [{"startTime": 0.0, "endTime": 1.0, "text": "ðə", "semanticLabel": "the"}]
+        ),
+        content_type="application/json",
+    )
+    client.put(
+        f"/api/clips/{clip_id}/annotations",
+        data=_json.dumps(
+            [{"startTime": 0.0, "endTime": 1.0, "text": "dʌ", "semanticLabel": "the"}]
+        ),
+        content_type="application/json",
+        headers={"Remote-User": "alice"},
+    )
+    res = client.get(f"/api/clips/{clip_id}/agreement").get_json()
+    p = res["pairs"][0]
+    assert p["boundaryF1"] == 1.0
+    assert p["phonemeErrorRate"] > 0
+    assert p["frameKappa"] is not None and p["frameKappa"] < 1.0
+
+
+def test_corpus_agreement(client):
+    clip_id = client.get("/api/clips").get_json()[0]["id"]
+    import json as _json
+
+    payload = [{"startTime": 0.0, "endTime": 1.0, "text": "ðə", "semanticLabel": "the"}]
+    client.put(
+        f"/api/clips/{clip_id}/annotations",
+        data=_json.dumps(payload),
+        content_type="application/json",
+    )
+    client.put(
+        f"/api/clips/{clip_id}/annotations",
+        data=_json.dumps(payload),
+        content_type="application/json",
+        headers={"Remote-User": "alice"},
+    )
+
+    res = client.get("/api/agreement")
+    body = res.get_json()
+    assert len(body["pairs"]) == 1
+    assert body["pairs"][0]["clipsShared"] == 1
+    assert body["pairs"][0]["frameKappa"] == 1.0
+
+
 def test_transcribe_missing_clip(client):
     res = client.post("/api/clips/99999/transcribe")
     assert res.status_code == 404

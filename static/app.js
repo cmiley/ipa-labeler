@@ -15,6 +15,7 @@ const modeMineBtn = document.getElementById('modeMine');
 const modeAllBtn = document.getElementById('modeAll');
 const viewUserSelect = document.getElementById('viewUserSelect');
 const autoTranscribeBtn = document.getElementById('autoTranscribeBtn');
+const agreementPanel = document.getElementById('agreementPanel');
 const transcriptionInput = document.getElementById('transcriptionInput');
 const addSegmentBtn = document.getElementById('addSegment');
 const annotationsDiv = document.getElementById('annotations');
@@ -923,6 +924,50 @@ function renderSelectedOtherUser() {
     annotations = entry ? entry.segments.map(s => ({...s})) : [];
     markClean();
     renderAnnotations();
+    renderAgreementPanel(uid).catch(() => {});  // best-effort
+}
+
+function fmtMetric(v, digits = 2) {
+    return v === null || v === undefined ? '—' : Number(v).toFixed(digits);
+}
+
+async function renderAgreementPanel(otherUserId) {
+    if (!currentClip || !currentUser) {
+        agreementPanel.style.display = 'none';
+        return;
+    }
+    const res = await fetch(`/api/clips/${currentClip.id}/agreement`);
+    if (!res.ok) {
+        agreementPanel.style.display = 'none';
+        return;
+    }
+    const body = await res.json();
+    const me = currentUser.id;
+    const pair = (body.pairs || []).find(p =>
+        (p.userA.id === me && p.userB.id === otherUserId) ||
+        (p.userB.id === me && p.userA.id === otherUserId)
+    );
+    if (!pair) {
+        agreementPanel.innerHTML = `<span class="agreement-title">Agreement vs ${entry_name(otherUserId)}</span>
+            <span>You haven't labeled this clip yet — save your own annotations first to see metrics.</span>`;
+        agreementPanel.className = 'agreement-panel';
+        agreementPanel.style.display = '';
+        return;
+    }
+    agreementPanel.className = 'agreement-panel';
+    agreementPanel.innerHTML = `
+        <span class="agreement-title">You vs ${pair.userA.id === me ? pair.userB.displayName : pair.userA.displayName}</span>
+        <div class="metric"><span class="metric-label">Frame κ</span><span class="metric-value">${fmtMetric(pair.frameKappa)}</span></div>
+        <div class="metric"><span class="metric-label">Boundary F1 (±50ms)</span><span class="metric-value">${fmtMetric(pair.boundaryF1)}</span></div>
+        <div class="metric"><span class="metric-label">Matched segs</span><span class="metric-value">${pair.matchedSegmentCount} / ${Math.max(pair.aSegmentCount, pair.bSegmentCount)}</span></div>
+        <div class="metric"><span class="metric-label">Phoneme error rate</span><span class="metric-value">${fmtMetric(pair.phonemeErrorRate)}</span></div>
+    `;
+    agreementPanel.style.display = '';
+}
+
+function entry_name(uid) {
+    const a = allAnnotations.find(x => x.userId === uid);
+    return a ? (a.userDisplayName || ('user ' + uid)) : ('user ' + uid);
 }
 
 async function exitAllMode() {
@@ -932,6 +977,7 @@ async function exitAllMode() {
     modeAllBtn.classList.remove('active');
     modeMineBtn.classList.add('active');
     viewUserSelect.style.display = 'none';
+    agreementPanel.style.display = 'none';
     await loadAnnotations();
 }
 

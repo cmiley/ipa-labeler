@@ -28,6 +28,7 @@ h1 {
 .clip-bar {
     display: flex;
     align-items: center;
+    flex-wrap: wrap;
     gap: 10px;
     padding: 10px;
     background: #f9f9f9;
@@ -170,6 +171,43 @@ body.view-all .marker-delete {
 .auto-btn:disabled {
     background: #ce93d8;
     cursor: wait;
+}
+
+.agreement-panel {
+    padding: 10px 14px;
+    background: #f3e5f5;
+    border: 1px solid #ce93d8;
+    border-radius: 4px;
+    margin: 10px 0;
+    font-size: 13px;
+    color: #4a148c;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 18px;
+    align-items: center;
+}
+
+.agreement-panel .agreement-title {
+    font-weight: 600;
+}
+
+.agreement-panel .metric {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+}
+
+.agreement-panel .metric-label {
+    font-size: 11px;
+    color: #6a1b9a;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.agreement-panel .metric-value {
+    font-weight: 600;
+    font-size: 16px;
+    color: #4a148c;
 }
 
 #audioPlayer {

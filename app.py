@@ -9,7 +9,7 @@ import zipfile
 from pathlib import Path
 
 from flask import Flask, abort, jsonify, render_template, send_file
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 import annotations as annotations_module
 import clips as clips_module
@@ -101,6 +101,104 @@ def create_app() -> Flask:
         with session_scope() as session:
             user = get_or_create_current_user(session)
             return jsonify(user.to_dict())
+
+    @app.get("/api/clips/<int:clip_id>/agreement")
+    def clip_agreement(clip_id: int):
+        import agreement
+
+        with session_scope() as session:
+            clip = session.get(AudioClip, clip_id)
+            if clip is None:
+                abort(404)
+            anns = list(
+                session.scalars(
+                    select(Annotation).where(Annotation.clip_id == clip_id)
+                )
+            )
+            users = {a.user_id: a.user for a in anns}
+
+        if len(anns) < 2:
+            return jsonify({"clipId": clip_id, "pairs": [], "note": "need at least 2 annotators"})
+
+        pairs = []
+        for i in range(len(anns)):
+            for j in range(i + 1, len(anns)):
+                a, b = anns[i], anns[j]
+                metrics = agreement.pairwise(a.segments, b.segments)
+                pairs.append(
+                    {
+                        "userA": {
+                            "id": a.user_id,
+                            "displayName": users[a.user_id].display_name,
+                        },
+                        "userB": {
+                            "id": b.user_id,
+                            "displayName": users[b.user_id].display_name,
+                        },
+                        "aSegmentCount": len(a.segments),
+                        "bSegmentCount": len(b.segments),
+                        **metrics,
+                    }
+                )
+        return jsonify({"clipId": clip_id, "pairs": pairs})
+
+    @app.get("/api/agreement")
+    def corpus_agreement():
+        """Pool per-frame labels across every clip that has ≥2 annotators."""
+        import agreement
+
+        with session_scope() as session:
+            clip_ids = [
+                cid
+                for (cid,) in session.execute(
+                    select(Annotation.clip_id)
+                    .group_by(Annotation.clip_id)
+                    .having(func.count(Annotation.user_id) >= 2)
+                ).all()
+            ]
+
+            pooled: dict[tuple[int, int], dict[str, list]] = {}
+            user_names: dict[int, str | None] = {}
+
+            for clip_id in clip_ids:
+                anns = list(
+                    session.scalars(
+                        select(Annotation).where(Annotation.clip_id == clip_id)
+                    )
+                )
+                for a in anns:
+                    user_names[a.user_id] = a.user.display_name
+                for i in range(len(anns)):
+                    for j in range(i + 1, len(anns)):
+                        a, b = anns[i], anns[j]
+                        key = tuple(sorted((a.user_id, b.user_id)))
+                        # Ensure consistent ordering of which segments map to A vs B.
+                        if a.user_id != key[0]:
+                            a, b = b, a
+                        total = max(
+                            max((s["endTime"] for s in a.segments), default=0.0),
+                            max((s["endTime"] for s in b.segments), default=0.0),
+                        )
+                        labels_a = agreement._frame_labels(a.segments, total)
+                        labels_b = agreement._frame_labels(b.segments, total)
+                        bucket = pooled.setdefault(key, {"a": [], "b": [], "clips": 0})
+                        bucket["a"].extend(labels_a)
+                        bucket["b"].extend(labels_b)
+                        bucket["clips"] += 1
+
+        results = []
+        for (uid_a, uid_b), bucket in pooled.items():
+            kappa = agreement.cohens_kappa(bucket["a"], bucket["b"])
+            results.append(
+                {
+                    "userA": {"id": uid_a, "displayName": user_names.get(uid_a)},
+                    "userB": {"id": uid_b, "displayName": user_names.get(uid_b)},
+                    "framesCompared": len(bucket["a"]),
+                    "clipsShared": bucket["clips"],
+                    "frameKappa": kappa,
+                }
+            )
+        return jsonify({"pairs": results})
 
     @app.post("/api/clips/<int:clip_id>/transcribe")
     def transcribe_clip(clip_id: int):
