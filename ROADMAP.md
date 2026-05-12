@@ -7,9 +7,12 @@ Status legend: `[ ]` not started · `[~]` in progress · `[x]` done
 - [x] **Pre-deploy app hardening** — path-sanitized uploads, extension whitelist, `threading.Lock` on annotations file, `/healthz`, shared-boundary drag fix, Enter-to-add-segment, upload error handling, ResizeObserver waveform redraw, `beforeunload` guard + toast notifications, timestamp dedupe, smoke tests in `tests/test_app.py`
 - [x] **Step 1.2** — `IPA_LABELER_DATA_DIR` env var; `harvard.wav` auto-seeded into a fresh data dir on startup
 - [x] **Step 1.3** — `Dockerfile` (non-root, gunicorn `-w 1`, `IPA_LABELER_DATA_DIR=/data`), `.dockerignore`, `.github/workflows/build.yml` pushing to `ghcr.io/cmiley/ipa-labeler:latest` + `:sha-<short>`. Verified end-to-end with `docker build` + `docker run` + named-volume restart-persist via Colima.
-- [x] **Step 1.4** — Manifests in `homelab-k8s/kubernetes/apps/ipa-labeler/` (deployment with `Recreate` strategy, fsGroup 1000, `/healthz` probes, /tmp emptyDir, readOnlyRootFilesystem) + `pvc.yaml` (Longhorn 20Gi) + dual-host ingress (`ipa.homelab.caylermiley.com` for LAN, `ipa.caylermiley.com` for tunnel) with Authelia ForwardAuth + ArgoCD Application at `bootstrap/apps/ipa-labeler.yaml`. `kustomize build` renders clean.
+- [x] **Step 1.4** — Manifests in `homelab-k8s/kubernetes/apps/ipa-labeler/` + `pvc.yaml` (Longhorn 20Gi) + ingress (`ipa.homelab.caylermiley.com`, Authelia ForwardAuth) + ArgoCD Application at `bootstrap/apps/ipa-labeler.yaml`. Pushed to homelab-k8s; pod `1/1 Running` on `dell-optiplex`, cert issued via DNS-01.
+- [x] **Step 1.5** — ArgoCD Application synced; verified `1/1 Running` end-to-end.
+- [x] **Step 1.6 — REPLACED** — Cloudflare Tunnel not needed. Wildcard CNAME `*.homelab.caylermiley.com → 192.168.20.200` in public DNS already covers reachability: LAN clients route directly to MetalLB; off-LAN clients reach the cluster via the existing Headscale/Tailscale mesh. No new cluster infrastructure required.
+- [x] **Authelia rule** — `ipa.homelab.caylermiley.com` added to user-level `one_factor` rules in `core/authelia/configmap.yaml`; default-deny was 403'ing the host. Verified `https://ipa.homelab.caylermiley.com/` returns 302 → Authelia portal.
 
-Target end-state for Phases 1–2: publicly reachable Flask app at `ipa.caylermiley.com` (or `ipa.homelab.caylermiley.com` if homelab-only is preferred), backed by Postgres, with Authelia SSO and admin-managed user accounts. Annotations are per-user, per-clip; harvard.wav is the seed sample and any logged-in user can label any clip in the database.
+Target end-state for Phases 1–2: Flask app at `ipa.homelab.caylermiley.com`, backed by Postgres, with Authelia SSO + admin-managed Authelia/LLDAP users. LAN-direct and Tailscale-via-Headscale for off-LAN. Annotations are per-user, per-clip; harvard.wav is the seed sample and any logged-in user can label any clip in the database.
 
 ---
 
@@ -17,8 +20,8 @@ Target end-state for Phases 1–2: publicly reachable Flask app at `ipa.caylermi
 
 | # | Decision | Options | Recommendation |
 |---|----------|---------|----------------|
-| D1 | Public reachability | (a) Cloudflare Tunnel (`cloudflared`) — no port forward, terminates TLS at Cloudflare → re-encrypts to Traefik. (b) Port-forward 80/443 on UDM Pro → MetalLB IP. | **(a)** — matches existing Cloudflare DNS-01 setup, no public IP exposure, free tier sufficient. |
-| D2 | Public hostname | (a) `ipa.caylermiley.com`. (b) `ipa.homelab.caylermiley.com` (requires Pi-hole entry to be replaced with a public Cloudflare record). | **(a)** — keeps `homelab.*` semantically internal. |
+| D1 | ~~Public reachability~~ | **Resolved.** Wildcard public CNAME already routes `*.homelab.caylermiley.com` to the MetalLB IP; Headscale handles off-LAN. No cloudflared needed. | |
+| D2 | ~~Public hostname~~ | **Resolved.** `ipa.homelab.caylermiley.com`. | |
 | D3 | Image registry | (a) GHCR via existing `github-runner`. (b) Local registry on cluster. | **(a)** — already wired up. |
 | D4 | Postgres flavor | (a) Bare Postgres StatefulSet + Longhorn PVC. (b) CloudNativePG `Cluster` resource. | **(b)** — CloudNativePG is already deployed in your cluster (`bootstrap/apps/cloudnative-pg.yaml`); a single `Cluster` resource is simpler than a hand-rolled StatefulSet and gives you scheduled backups, scale-up, and metrics out of the box. |
 | D5 | Audio storage backend | (a) Longhorn PVC mounted at `/data/clips/`. (b) MinIO with S3 API. | **(a)** to start; migrate to MinIO if/when you want signed URLs or cross-app access. |
@@ -101,31 +104,29 @@ Add to `kubernetes/sets/app-set.yaml` (or create a single `Application` manifest
 
 **Verify:** `kubectl get pods -n ipa-labeler` shows the pod Running. `kubectl logs` shows gunicorn workers booting.
 
-### Step 1.6 — Public reachability (Cloudflare Tunnel path)
+### Step 1.6 — Reachability ✅
 
-This is new infrastructure for your cluster — it doesn't exist today. Add it as `kubernetes/core/cloudflared/`:
+No cloudflared / tunnel needed. `*.homelab.caylermiley.com` is a public-DNS wildcard CNAME → MetalLB IP `192.168.20.200`:
+- LAN clients route directly
+- Off-LAN clients reach the cluster via the existing Headscale/Tailscale mesh
+- For each new tester, issue a Headscale pre-auth key: `kubectl -n headscale exec -it deploy/headscale -- headscale preauthkeys create -u <user>`
 
-1. Create a Cloudflare Tunnel in the Cloudflare dashboard, save credentials JSON.
-2. Encrypt with SOPS, commit as `kubernetes/core/cloudflared/secret.yaml`.
-3. Deploy `cloudflared` as a Deployment with a ConfigMap mapping `ipa.caylermiley.com` → `http://traefik.kube-system.svc.cluster.local:80`.
-4. Create a CNAME `ipa.caylermiley.com` → `<tunnel-id>.cfargotunnel.com` (orange-cloud proxied).
-5. Make sure Traefik IngressRoute matches Host header for `ipa.caylermiley.com` (the Ingress from Step 1.4 handles this if you set the public hostname there).
+### Step 1.7 — Add yourself + initial users in Authelia / LLDAP
 
-Defer to Phase 1.5 if you'd rather port-forward instead — the rest of Phase 1 works either way.
+Authelia uses **LLDAP** as the user backend (`core/authelia/configmap.yaml` line ~57: `base_dn: dc=homelab,dc=caylermiley,dc=com`), so new users go in LLDAP, not into a hand-edited users.yaml. LLDAP has a web UI at `https://lldap.homelab.caylermiley.com` (admin-only via Authelia).
 
-**Verify:** `curl -I https://ipa.caylermiley.com` returns 200 (after Authelia auth) or 302 to Authelia.
+Steps:
+1. Log in to LLDAP UI as admin.
+2. Create the user, assign to the `users` group (or `admins` for cluster operators).
+3. New user can immediately log in at `https://auth.homelab.caylermiley.com` and reach `ipa.homelab.caylermiley.com`.
 
-### Step 1.7 — Add yourself + initial users in Authelia
-
-Edit `kubernetes/core/authelia/` user database (file-backed, in the existing config). Hash passwords with `authelia crypto hash generate argon2`. Commit the encrypted users.yaml. ArgoCD redeploys Authelia.
-
-**Verify:** New user can log in at `auth.homelab.caylermiley.com` and reach `ipa.caylermiley.com` after SSO.
+**Verify:** New user can log in and the IPA Labeler UI loads with harvard.wav.
 
 ### Phase 1 done when
 
-- [ ] `ipa.caylermiley.com` (or chosen host) returns the IPA Labeler UI after Authelia login from outside your network
+- [ ] `https://ipa.homelab.caylermiley.com` returns the IPA Labeler UI after Authelia login (LAN-direct and via Headscale)
 - [ ] Harvard sample audio plays, annotations persist across pod restarts (PVC working)
-- [ ] At least 2 Authelia users can log in (you + one tester)
+- [ ] At least 2 LLDAP users can log in (you + one tester)
 
 ---
 
